@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  data_service:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: quant-data-service
+    environment:
+      - SERVICE_NAME=data_service
+      - LOG_LEVEL=INFO
+    volumes:
+      - ../data:/app/data
+    command: python -m services.data_service.market_data
+
+  feature_service:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: quant-feature-service
+    environment:
+      - SERVICE_NAME=feature_service
+      - LOG_LEVEL=INFO
+    volumes:
+      - ../data:/app/data
+    command: python -c "from services.feature_service.indicators import add_features_to_data; print('Feature Service Ready')"
+
+  mcp_server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: quant-mcp-server
+    ports:
+      - "8000:8000"
+    environment:
+      - SERVICE_NAME=mcp_server
+      - LOG_LEVEL=INFO
+    volumes:
+      - ../data:/app/data
+    command: python mcp_server/server.py
+
+volumes:
+  data:
+    driver: local

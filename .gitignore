@@ -41,6 +41,10 @@ data/parquet/
 .env.local
 *.log
 
+# Node modules
+node_modules/
+.next/
+
 # Testing
 .pytest_cache/
 .coverage

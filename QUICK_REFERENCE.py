@@ -3,11 +3,12 @@
 Quick Reference: Testing Your Trading Strategies
 Copy-paste patterns for validating new strategies
 """
+from services.backtesting import Backtester
+from services.backtesting import BacktestValidator
 
 # ============================================================================
 # PATTERN 1: Quick Single Backtest
 # ============================================================================
-from services.backtesting import Backtester
 
 def test_simple():
     """Test: Single backtest on one stock"""
@@ -39,7 +40,6 @@ def test_simple():
 # ============================================================================
 # PATTERN 2: Validate Quality (Enterprise Standards)
 # ============================================================================
-from services.backtesting import BacktestValidator
 
 def test_with_validation():
     """Test: Single backtest + quality assessment"""
@@ -147,7 +147,7 @@ def test_walk_forward():
 def test_full_validation():
     """Test: Complete validation suite (what production uses)"""
     
-    from run_full_validation import run_full_validation
+    from tests.run_full_validation import run_full_validation
     
     def my_strategy(df):
         return ['BUY' if df['RSI_14'].iloc[i] < 30 else 'HOLD' for i in range(len(df))]
