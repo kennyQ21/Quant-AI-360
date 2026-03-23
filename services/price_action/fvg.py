@@ -19,6 +19,7 @@ class FVGState(Enum):
     TESTED = "TESTED"         # Price entered zone but didn't close through
     FILLED = "FILLED"         # Price closed through entire gap
     VIOLATED = "VIOLATED"     # Price closed beyond in wrong direction (becomes IFVG)
+    STALE = "STALE"           # FVG age exceeded max_age
 
 
 @dataclass
@@ -76,14 +77,18 @@ class FVGDetector:
     Quality: Strong middle candle (candle 2) = strong momentum
     """
     
-    def __init__(self, min_gap_size_pct: float = 0.2, max_gap_size_pct: float = 3.0):
+    def __init__(self, min_gap_size_pct: float = 0.2, max_gap_size_pct: float = 3.0, max_age: int = 30, min_volume_multiplier: float = 1.5):
         """
         Args:
             min_gap_size_pct: Minimum gap size to consider (0.2% = filter noise)
             max_gap_size_pct: Maximum gap size to consider (3%+ is rare/unreliable)
+            max_age: Maximum age (in candles) before an FVG becomes stale.
+            min_volume_multiplier: Minimum volume multiplier vs average for validation.
         """
         self.min_gap_size_pct = min_gap_size_pct
         self.max_gap_size_pct = max_gap_size_pct
+        self.max_age = max_age
+        self.min_volume_multiplier = min_volume_multiplier
         self.fvg_list: List[FVG] = []
     
     def detect_bullish_fvg(self, h1: float, l1: float, 
@@ -109,8 +114,7 @@ class FVGDetector:
         
         # Check middle candle quality (strong momentum)
         middle_body = abs(h2 - l2)  # Body size
-        middle_wick_top = h2 - max(h2, l2)  # Upper wick
-        middle_wick_bottom = min(h2, l2) - l2  # Lower wick
+
         
         # Strong candle = large body, small wicks
         if middle_body < gap_size * 0.5:  # Body should be substantial
@@ -177,6 +181,11 @@ class FVGDetector:
         fvgs = []
         start_idx = max(0, len(df) - lookback - 3)
         
+        # Calculate moving average volume for impulsive validation
+        if 'Volume' in df.columns:
+            # 20-period volume SMA
+            df['Vol_MA20'] = df['Volume'].rolling(window=20, min_periods=1).mean()
+        
         # Check every 3 consecutive candles
         for i in range(start_idx, len(df) - 2):
             c1_h = df['High'].iloc[i]
@@ -185,6 +194,13 @@ class FVGDetector:
             c2_l = df['Low'].iloc[i + 1]
             c3_h = df['High'].iloc[i + 2]
             c3_l = df['Low'].iloc[i + 2]
+            
+            # Check impulsive validation volume
+            if 'Volume' in df.columns and 'Vol_MA20' in df.columns:
+                vol2 = df['Volume'].iloc[i + 1]
+                avg_vol = df['Vol_MA20'].iloc[i + 1]
+                if avg_vol > 0 and vol2 < avg_vol * self.min_volume_multiplier:
+                    continue  # Invalid FVG due to lack of impulsive volume
             
             # Try bullish FVG
             bullish = self.detect_bullish_fvg(c1_h, c1_l, c2_h, c2_l, c3_h, c3_l, i + 2)
@@ -206,10 +222,16 @@ class FVGDetector:
         current_high = df['High'].iloc[-1]
         current_low = df['Low'].iloc[-1]
         current_close = df['Close'].iloc[-1]
+        current_idx = len(df) - 1
         
         for fvg in self.fvg_list:
-            if fvg.state == FVGState.FILLED or fvg.state == FVGState.VIOLATED:
+            if fvg.state in [FVGState.FILLED, FVGState.VIOLATED, FVGState.STALE]:
                 continue  # Already resolved
+                
+            # Stale check
+            if current_idx - fvg.candle_index > self.max_age:
+                fvg.state = FVGState.STALE
+                continue
             
             # Check if price entered zone
             if fvg.is_tested(current_high) or fvg.is_tested(current_low):

@@ -52,3 +52,8 @@ htmlcov/
 
 # MCP
 .mcp_cache/
+__pycache__/
+*.py[cod]
+*.class
+venv/
+.env

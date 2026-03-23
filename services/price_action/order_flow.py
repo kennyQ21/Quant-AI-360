@@ -235,36 +235,38 @@ class OrderFlowAnalyzer:
         return count
     
     def detect_bos(self, price: float, close: float, structure_sequence: List[StructurePoint], 
-                   trend: str) -> Optional[StructurePoint]:
+                   trend: str, open_price: float = None) -> Optional[StructurePoint]:
         """
-        Detect Break of Structure
+        Detect Break of Structure - Strict Prop-Desk Level
         
-        - In uptrend: price closes above most recent swing high
-        - In downtrend: price closes below most recent swing low
+        - In uptrend: price strictly closes above most recent swing high with a bullish candle
+        - In downtrend: price strictly closes below most recent swing low with a bearish candle
         
         Returns:
             StructurePoint of the BOS, or None if no BOS
         """
         if not structure_sequence:
             return None
+            
+        is_bullish_candle = open_price is not None and close > open_price
+        is_bearish_candle = open_price is not None and close < open_price
         
         # Get most recent structure point of the relevant type
         if trend == 'UPTREND':
-            # In uptrend, look for close above most recent SH
+            # In uptrend, look for strong close above most recent SH
             for point in reversed(structure_sequence):
                 if point.type == 'SH':
-                    if close > point.price:
-                        return point  # BOS detected
+                    if close > point.price and (open_price is None or is_bullish_candle):
+                        return point  # Strong BOS detected
                     else:
                         return None
         
         elif trend == 'DOWNTREND':
-            # In downtrend, look for close below most recent SL
+            # In downtrend, look for strong close below most recent SL
             for point in reversed(structure_sequence):
                 if point.type == 'SL':
-                    if close < point.price:
-                        return point  # BOS detected
-                    else:
+                    if close < point.price and (open_price is None or is_bearish_candle):
+                        return point  # Strong BOS detected
                         return None
         
         return None
@@ -331,10 +333,11 @@ class OrderFlowAnalyzer:
         
         # Get latest candle info
         latest_close = df['Close'].iloc[-1]
+        latest_open = df['Open'].iloc[-1]
         latest_price = df['High'].iloc[-1]
         
         # Detect BOS
-        bos = self.detect_bos(latest_price, latest_close, sequence, trend)
+        bos = self.detect_bos(latest_price, latest_close, sequence, trend, latest_open)
         if bos:
             self.current_structure.last_bos = bos
         

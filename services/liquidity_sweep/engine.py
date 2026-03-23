@@ -6,7 +6,7 @@ def detect_liquidity_sweep(data: pd.DataFrame, lookback: int = 20) -> Dict[str, 
     """
     Detects buy-side and sell-side liquidity sweeps.
     A sweep occurs when price wicks through a prior swing high/low
-    and then reverses back inside the range.
+    and then reverses back inside the range, confirmed by next candle.
     """
     if data.empty or len(data) < lookback + 5:
         return {"detected": False, "type": "none", "level": 0, "interpretation": "Insufficient data"}
@@ -19,33 +19,37 @@ def detect_liquidity_sweep(data: pd.DataFrame, lookback: int = 20) -> Dict[str, 
     swing_low = float(window["Low"].min())
 
     last_5 = recent.tail(5)
-    swept_high = float(last_5["High"].max())
-    swept_low = float(last_5["Low"].min())
-    close = float(data["Close"].iloc[-1])
 
-    # Bullish sweep: price dipped below swing low then closed above it
-    if swept_low < swing_low and close > swing_low:
-        return {
-            "detected": True,
-            "type": "Bullish Sweep",
-            "level": round(swing_low, 2),
-            "swept_to": round(swept_low, 2),
-            "interpretation": f"Price swept sell-side liquidity at \u20b9{swing_low:.1f} and recovered. Smart money absorption signal.",
-        }
+    # Check for strict sweep + confirmation logic
+    for i in range(len(last_5) - 1):
+        candle = last_5.iloc[i]
+        next_candle = last_5.iloc[i + 1]
 
-    # Bearish sweep: price pushed above swing high then closed below it
-    if swept_high > swing_high and close < swing_high:
-        return {
-            "detected": True,
-            "type": "Bearish Sweep",
-            "level": round(swing_high, 2),
-            "swept_to": round(swept_high, 2),
-            "interpretation": f"Price swept buy-side liquidity at \u20b9{swing_high:.1f} and rejected. Smart money distribution signal.",
-        }
+        # Bullish sweep: Wick breaches below swing_low, but closes above it. Next candle confirms.
+        if candle["Low"] < swing_low and candle["Close"] > swing_low:
+            if next_candle["Close"] > next_candle["Open"] and next_candle["Close"] > candle["Close"]:
+                return {
+                    "detected": True,
+                    "type": "Bullish Sweep",
+                    "level": round(swing_low, 2),
+                    "swept_to": round(float(candle["Low"]), 2),
+                    "interpretation": f"Price swept sell-side liquidity at \u20b9{swing_low:.1f}, closed back inside, and confirmed. Smart money absorption signal.",
+                }
+
+        # Bearish sweep: Wick breaches above swing_high, but closes below it. Next candle confirms.
+        if candle["High"] > swing_high and candle["Close"] < swing_high:
+            if next_candle["Close"] < next_candle["Open"] and next_candle["Close"] < candle["Close"]:
+                return {
+                    "detected": True,
+                    "type": "Bearish Sweep",
+                    "level": round(swing_high, 2),
+                    "swept_to": round(float(candle["High"]), 2),
+                    "interpretation": f"Price swept buy-side liquidity at \u20b9{swing_high:.1f}, closed back inside, and confirmed. Smart money distribution signal.",
+                }
 
     return {
         "detected": False,
         "type": "none",
         "level": 0,
-        "interpretation": "No liquidity sweep pattern detected in recent price action.",
+        "interpretation": "No strict liquidity sweep pattern detected in recent price action.",
     }

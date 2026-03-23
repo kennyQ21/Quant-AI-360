@@ -1,4 +1,6 @@
-from fastapi import APIRouter, HTTPException
+
+
+text = """from fastapi import APIRouter, HTTPException
 from typing import Dict, Any
 import requests
 import pandas as pd
@@ -8,7 +10,7 @@ router = APIRouter(tags=["Market"])
 
 @router.get("/market/context")
 async def get_market() -> Dict[str, Any]:
-    """Retrieve NIFTY 50 market context (regime, trend, volatility)."""
+    \"\"\"Retrieve NIFTY 50 market context (regime, trend, volatility).\"\"\"
     try:
         from services.market_regime.engine import get_market_context
         ctx = get_market_context("^NSEI")
@@ -18,7 +20,7 @@ async def get_market() -> Dict[str, Any]:
 
 @router.get("/market/indices/{index_name}")
 async def get_index_symbols(index_name: str) -> Dict[str, Any]:
-    """Retrieve symbols for a given NSE index."""
+    \"\"\"Retrieve symbols for a given NSE index.\"\"\"
     urls = {
         "nifty50": "https://nsearchives.nseindia.com/content/indices/ind_nifty50list.csv",
         "nifty500": "https://nsearchives.nseindia.com/content/indices/ind_nifty500list.csv",
@@ -51,3 +53,7 @@ async def get_index_symbols(index_name: str) -> Dict[str, Any]:
             raise HTTPException(status_code=r.status_code, detail="Failed to fetch index")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+"""
+with open("api/routes/market.py", "w") as f:
+    f.write(text)
+print("api/routes/market.py was written")

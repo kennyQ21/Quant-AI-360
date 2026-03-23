@@ -17,6 +17,7 @@ from api.routes.stocks import router as stocks_router
 from api.routes.portfolio import router as portfolio_router
 from api.routes.market import router as market_router
 from api.routes.analysis import router as analysis_router
+from api.routes.price_action import router as price_action_router
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -41,6 +42,7 @@ app.include_router(stocks_router, prefix="/api")
 app.include_router(portfolio_router, prefix="/api")
 app.include_router(market_router, prefix="/api")
 app.include_router(analysis_router, prefix="/api")
+app.include_router(price_action_router, prefix="/api")
 
 @app.get("/")
 async def root():

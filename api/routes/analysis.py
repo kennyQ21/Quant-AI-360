@@ -30,18 +30,26 @@ router = APIRouter(tags=["Analysis"])
 
 def _load_data(symbol: str) -> pd.DataFrame:
     """Load stock data from parquet or fall back to yfinance."""
+    df = None
     parquet_path = PARQUET_DIR / f"{symbol}.parquet"
     if parquet_path.exists():
         try:
             df = pd.read_parquet(parquet_path)
             if not df.empty:
                 logger.info(f"Loaded {len(df)} rows from parquet for {symbol}")
-                return df
         except Exception as e:
             logger.warning(f"Failed to load parquet for {symbol}: {e}")
+            df = None
 
-    logger.info(f"Loading from yfinance for {symbol}")
-    df = yf.download(symbol, period="1y", progress=False)
+    if df is None or df.empty:
+        logger.info(f"Loading from yfinance for {symbol}")
+        df = yf.download(symbol, period="1y", progress=False)
+
+    # Handle MultiIndex columns from yfinance or parquet
+    if isinstance(df.columns, pd.MultiIndex):
+        # Flatten columns to single index
+        df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
+        
     return df
 
 
@@ -104,7 +112,7 @@ def _build_story_sections(
     }
 
 
-@router.get("/analyze/{symbol}")
+@router.get("/stock/{symbol}/analysis-360")
 async def get_analysis(symbol: str):
     """Get 360° stock analysis."""
     try:
@@ -117,11 +125,12 @@ async def get_analysis(symbol: str):
         fib = calculate_fibonacci_retracement(data)
         liquidity = detect_liquidity_sweep(data)
         momentum = get_momentum(data)
-        rs = get_relative_strength(symbol)
+        rs = get_relative_strength(symbol, data)
         market = get_market_context()
         volatility = get_volatility(data)
         sentiment = get_sentiment_summary(symbol)
         news = get_news(symbol)
+        open("/tmp/news.txt","w").write(str(news))
 
         story_sections = _build_story_sections(structure, fib, liquidity, rs, current_price)
         scenarios = generate_scenarios(
@@ -159,7 +168,7 @@ async def get_analysis(symbol: str):
             "story": story_sections.get("conclusion", ""),
             "scenarios": scenarios,
             "confluence_breakdown": {
-                "trend": {"label": "Structure", "earned": 1 if trend != "Unknown" else 0, "max": 1},
+                "trend": {"label": "Structure", "earned": 1 if structure.get("trend") != "Unknown" else 0, "max": 1},
                 "momentum": {"label": "Momentum", "earned": 1 if momentum.get("momentum_label") != "Weak" else 0, "max": 1},
                 "fib": {"label": "Fibonacci", "earned": 1 if fib.get("zone") == "golden_pocket" else 0, "max": 1},
                 "liq": {"label": "Liquidity", "earned": 1 if liquidity.get("detected") else 0, "max": 1},
@@ -172,7 +181,13 @@ async def get_analysis(symbol: str):
             "fibonacci": fib,
             "market_regime": market,
             "sentiment": sentiment,
-            "news": news[:3] if news else [],
+            "TEST_FIELD": "HELLO",
+            "news": {
+                **news,
+                "headlines": news.get("headlines", [])[:3] if isinstance(news, dict) else (news[:3] if isinstance(news, list) else [])
+            } if isinstance(news, dict) else {
+                "headlines": news[:3] if isinstance(news, list) else []
+            },
         }
 
     except HTTPException:
