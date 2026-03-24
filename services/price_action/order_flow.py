@@ -70,21 +70,21 @@ class OrderFlowAnalyzer:
         
         swings = []
         for i in range(lookback, len(df) - lookback):
-            current_high = df['High'].iloc[i]
+            current_high = float(highs[i])
             
             # Check if it's a local maximum
             is_swing_high = True
             
             # Check previous lookback candles
             for j in range(i - lookback, i):
-                if df['High'].iloc[j] >= current_high:
+                if float(highs[j]) >= current_high:
                     is_swing_high = False
                     break
             
             # Check next lookback candles
             if is_swing_high:
                 for j in range(i + 1, i + lookback + 1):
-                    if df['High'].iloc[j] >= current_high:
+                    if float(highs[j]) >= current_high:
                         is_swing_high = False
                         break
             
@@ -108,21 +108,21 @@ class OrderFlowAnalyzer:
         
         swings = []
         for i in range(lookback, len(df) - lookback):
-            current_low = df['Low'].iloc[i]
+            current_low = float(lows[i])
             
             # Check if it's a local minimum
             is_swing_low = True
             
             # Check previous lookback candles
             for j in range(i - lookback, i):
-                if df['Low'].iloc[j] <= current_low:
+                if float(lows[j]) <= current_low:
                     is_swing_low = False
                     break
             
             # Check next lookback candles
             if is_swing_low:
                 for j in range(i + 1, i + lookback + 1):
-                    if df['Low'].iloc[j] <= current_low:
+                    if float(lows[j]) <= current_low:
                         is_swing_low = False
                         break
             

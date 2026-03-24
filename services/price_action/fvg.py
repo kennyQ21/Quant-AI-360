@@ -4,6 +4,7 @@ Identifies imbalances created when price moves fast, leaving gaps
 These gaps tend to get filled as price naturally rebalances
 """
 import pandas as pd
+import numpy as np
 from typing import List, Dict, Optional
 from dataclasses import dataclass
 from enum import Enum
@@ -197,7 +198,7 @@ class FVGDetector:
             
             # Check impulsive validation volume
             if 'Volume' in df.columns and 'Vol_MA20' in df.columns:
-                vol2 = df['Volume'].iloc[i + 1]
+                vol2 = float(np.asarray(df['Volume'])[i + 1])
                 avg_vol = df['Vol_MA20'].iloc[i + 1]
                 if avg_vol > 0 and vol2 < avg_vol * self.min_volume_multiplier:
                     continue  # Invalid FVG due to lack of impulsive volume
