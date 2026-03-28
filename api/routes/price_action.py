@@ -2,41 +2,14 @@
 Price Action Analysis Route
 Returns all 7 detectors + confluence setup for a stock
 """
-import sys
 import logging
-from pathlib import Path
 from fastapi import APIRouter, HTTPException
 import pandas as pd
-import yfinance as yf
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-from config import PARQUET_DIR
+from api.dependencies import load_stock_data
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Price Action"])
-
-
-def _load_price_action_data(symbol: str) -> pd.DataFrame:
-    """Load stock data, ensure proper column format."""
-    df = None
-    parquet_path = PARQUET_DIR / f"{symbol}.parquet"
-    if parquet_path.exists():
-        try:
-            df = pd.read_parquet(parquet_path)
-            if not df.empty:
-                logger.info(f"Loaded {len(df)} rows from parquet for {symbol}")
-        except Exception as e:
-            logger.warning(f"Failed to load parquet for {symbol}: {e}")
-            df = None
-
-    if df is None or df.empty:
-        logger.info(f"Loading from yfinance for {symbol}")
-        df = yf.download(symbol, period="2y", progress=False)
-
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
-    
-    return df
 
 
 @router.get("/stock/{symbol}/price-action")
@@ -55,7 +28,7 @@ async def get_price_action_analysis(symbol: str) -> dict:
     - confluence: Combined signal + score
     """
     try:
-        data = _load_price_action_data(symbol)
+        data = load_stock_data(symbol)
         if data.empty:
             raise HTTPException(status_code=404, detail=f"No data for {symbol}")
 

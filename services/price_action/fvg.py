@@ -29,9 +29,10 @@ class FVG:
     top: float          # Top boundary of gap
     bottom: float       # Bottom boundary of gap
     direction: str      # 'BULLISH' or 'BEARISH'
-    candle_index: int   # Where the gap was created
+    candle_index: int   # Absolute index where the gap was created
     state: FVGState = FVGState.FRESH
     touches: int = 0    # How many times price touched the zone
+    age_bars: int = 0   # How old the FVG is in bars
     
     def __post_init__(self):
         """Calculate gap size"""
@@ -187,19 +188,23 @@ class FVGDetector:
             # 20-period volume SMA
             df['Vol_MA20'] = df['Volume'].rolling(window=20, min_periods=1).mean()
         
+        # Extract arrays for safe and fast operations
+        highs = np.asarray(df['High'])
+        lows = np.asarray(df['Low'])
+        
         # Check every 3 consecutive candles
         for i in range(start_idx, len(df) - 2):
-            c1_h = df['High'].iloc[i]
-            c1_l = df['Low'].iloc[i]
-            c2_h = df['High'].iloc[i + 1]
-            c2_l = df['Low'].iloc[i + 1]
-            c3_h = df['High'].iloc[i + 2]
-            c3_l = df['Low'].iloc[i + 2]
+            c1_h = highs[i]
+            c1_l = lows[i]
+            c2_h = highs[i + 1]
+            c2_l = lows[i + 1]
+            c3_h = highs[i + 2]
+            c3_l = lows[i + 2]
             
             # Check impulsive validation volume
             if 'Volume' in df.columns and 'Vol_MA20' in df.columns:
                 vol2 = float(np.asarray(df['Volume'])[i + 1])
-                avg_vol = df['Vol_MA20'].iloc[i + 1]
+                avg_vol = float(np.asarray(df['Vol_MA20'])[i + 1])
                 if avg_vol > 0 and vol2 < avg_vol * self.min_volume_multiplier:
                     continue  # Invalid FVG due to lack of impulsive volume
             
@@ -216,68 +221,49 @@ class FVGDetector:
         return fvgs
     
     def update_fvg_states(self, df: pd.DataFrame):
+        pass # Now handled statelessly within analyze
+
+    def analyze(self, df: pd.DataFrame) -> Dict:
         """
-        Update state of all tracked FVGs based on current price
-        Call this on every new candle
+        Complete FVG analysis. Stateless evaluation to avoid ghosting.
         """
-        current_high = df['High'].iloc[-1]
-        current_low = df['Low'].iloc[-1]
-        current_close = df['Close'].iloc[-1]
+        fvgs = self.detect_all_fvgs(df, lookback=len(df))
+        
+        highs = np.asarray(df['High'])
+        lows = np.asarray(df['Low'])
+        closes = np.asarray(df['Close'])
         current_idx = len(df) - 1
         
-        for fvg in self.fvg_list:
-            if fvg.state in [FVGState.FILLED, FVGState.VIOLATED, FVGState.STALE]:
-                continue  # Already resolved
+        self.fvg_list = []
+        for fvg in fvgs:
+            for i in range(fvg.candle_index + 1, current_idx + 1):
+                fvg.age_bars = i - fvg.candle_index
+                if fvg.age_bars > self.max_age:
+                    fvg.state = FVGState.STALE
+                    break
+                    
+                h, low_price, c = float(highs[i]), float(lows[i]), float(closes[i])
                 
-            # Stale check
-            if current_idx - fvg.candle_index > self.max_age:
-                fvg.state = FVGState.STALE
-                continue
-            
-            # Check if price entered zone
-            if fvg.is_tested(current_high) or fvg.is_tested(current_low):
-                if fvg.state == FVGState.FRESH:
+                if fvg.is_filled(h, low_price):
+                    fvg.state = FVGState.FILLED
+                    break
+                elif fvg.is_violated(c):
+                    fvg.state = FVGState.VIOLATED
+                    break
+                elif fvg.is_tested(h) or fvg.is_tested(low_price):
                     fvg.touches += 1
                     fvg.state = FVGState.TESTED
             
-            # Check if price filled the gap
-            if fvg.is_filled(current_high, current_low):
-                fvg.state = FVGState.FILLED
+            # Recalculate age if loop didn't run
+            if current_idx >= fvg.candle_index:
+                fvg.age_bars = current_idx - fvg.candle_index
+                    
+            self.fvg_list.append(fvg)
             
-            # Check if price violated the gap (becomes IFVG)
-            elif fvg.is_violated(current_close):
-                fvg.state = FVGState.VIOLATED
-    
-    def analyze(self, df: pd.DataFrame) -> Dict:
-        """
-        Complete FVG analysis
-        
-        Returns:
-            Dict with FVG statistics and setup information
-        """
-        # Detect FVGs
-        new_fvgs = self.detect_all_fvgs(df, lookback=100)
-        
-        # Add unique FVGs to list (avoid duplicates)
-        for new_fvg in new_fvgs:
-            exists = False
-            for existing in self.fvg_list:
-                if abs(new_fvg.top - existing.top) < 0.001 and \
-                   abs(new_fvg.bottom - existing.bottom) < 0.001 and \
-                   new_fvg.direction == existing.direction:
-                    exists = True
-                    break
-            if not exists:
-                self.fvg_list.append(new_fvg)
-        
-        # Update states
-        self.update_fvg_states(df)
-        
-        # Get fresh FVGs (not yet tested or filled)
         fresh_fvgs = [f for f in self.fvg_list if f.state == FVGState.FRESH]
-        
-        # Get tested FVGs (price entered but not filled)
         tested_fvgs = [f for f in self.fvg_list if f.state == FVGState.TESTED]
+        untested_bullish = [f for f in fresh_fvgs if f.direction == 'BULLISH']
+        untested_bearish = [f for f in fresh_fvgs if f.direction == 'BEARISH']
         
         return {
             'total_fvgs': len(self.fvg_list),
@@ -286,6 +272,8 @@ class FVGDetector:
             'filled_fvgs': len([f for f in self.fvg_list if f.state == FVGState.FILLED]),
             'violated_fvgs': len([f for f in self.fvg_list if f.state == FVGState.VIOLATED]),
             'fvg_list': self.fvg_list,
+            'untested_bullish': untested_bullish,
+            'untested_bearish': untested_bearish,
             'fresh_fvg_details': [{'price': f.top, 'direction': f.direction, 'size_pct': f.gap_size_pct} for f in fresh_fvgs],
         }
     

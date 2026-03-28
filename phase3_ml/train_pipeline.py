@@ -134,7 +134,7 @@ def walk_forward_train(
         try:
             # Build features + target for full range
             featured = build_ml_features(raw.copy())
-            featured = add_target(featured, horizon=horizon)
+            featured = add_target(featured, target_horizon=horizon)
 
             # Ensure Date column exists
             if "Date" not in featured.columns:

@@ -14,6 +14,7 @@ try:
     from sklearn.linear_model import LogisticRegression
     from sklearn.preprocessing import StandardScaler
     from sklearn.pipeline import Pipeline
+    from sklearn.impute import SimpleImputer
     HAS_SKLEARN = True
 except ImportError:
     HAS_SKLEARN = False
@@ -41,6 +42,7 @@ class LogisticModel:
             return {"status": "skipped", "reason": "scikit-learn not installed"}
 
         self.pipeline = Pipeline([
+            ("imputer", SimpleImputer(strategy="mean")),
             ("scaler", StandardScaler()),
             ("clf", LogisticRegression(max_iter=self.max_iter, random_state=42)),
         ])
@@ -55,7 +57,11 @@ class LogisticModel:
     def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
         if not self.is_fitted or self.pipeline is None:
             return np.full(len(X), 0.5)
-        return self.pipeline.predict_proba(X.values)[:, 1]
+        logistic_clf = self.pipeline.named_steps["clf"]
+        class_idx = list(logistic_clf.classes_).index(1) if 1 in logistic_clf.classes_ else -1
+        if class_idx != -1:
+            return self.pipeline.predict_proba(X.values)[:, class_idx]
+        return np.full(len(X), 0.5)
 
     def predict(self, X: pd.DataFrame) -> np.ndarray:
         if not self.is_fitted or self.pipeline is None:

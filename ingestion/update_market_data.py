@@ -3,6 +3,7 @@ Daily Market Data Update
 Fetches latest data and updates the parquet files
 """
 import sys
+import pandas as pd
 from pathlib import Path
 import logging
 from datetime import datetime

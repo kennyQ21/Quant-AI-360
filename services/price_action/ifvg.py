@@ -4,6 +4,7 @@ When an FVG gets violated, it flips and becomes resistance/support
 These are high-probability rejection zones
 """
 from typing import List, Dict
+import pandas as pd
 from dataclasses import dataclass
 import logging
 
@@ -88,7 +89,7 @@ class IFVGMonitor:
         """Get all support IFVGs below price"""
         return [i for i in self.ifvg_list if i.acts_as == 'SUPPORT' and i.bottom < below_price]
     
-    def analyze(self) -> Dict:
+    def analyze(self, df: pd.DataFrame = None) -> Dict:
         """Get IFVG summary"""
         resistance = [i for i in self.ifvg_list if i.acts_as == 'RESISTANCE']
         support = [i for i in self.ifvg_list if i.acts_as == 'SUPPORT']

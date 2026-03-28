@@ -3,6 +3,7 @@ ORDER FLOW & MARKET STRUCTURE ANALYZER
 Foundation of the price action system
 Tracks structure, detects BOS (Break of Structure) and CHoCH (Change of Character)
 """
+import numpy as np
 import pandas as pd
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass
@@ -69,6 +70,7 @@ class OrderFlowAnalyzer:
             return []
         
         swings = []
+        highs = np.asarray(df['High'])
         for i in range(lookback, len(df) - lookback):
             current_high = float(highs[i])
             
@@ -107,6 +109,7 @@ class OrderFlowAnalyzer:
             return []
         
         swings = []
+        lows = np.asarray(df['Low'])
         for i in range(lookback, len(df) - lookback):
             current_low = float(lows[i])
             
@@ -332,9 +335,9 @@ class OrderFlowAnalyzer:
         trend, quality = self.classify_structure(sequence)
         
         # Get latest candle info
-        latest_close = df['Close'].iloc[-1]
-        latest_open = df['Open'].iloc[-1]
-        latest_price = df['High'].iloc[-1]
+        latest_close = float(np.asarray(df['Close'])[-1])
+        latest_open = float(np.asarray(df['Open'])[-1])
+        latest_price = float(np.asarray(df['High'])[-1])
         
         # Detect BOS
         bos = self.detect_bos(latest_price, latest_close, sequence, trend, latest_open)
@@ -351,6 +354,9 @@ class OrderFlowAnalyzer:
             self.current_structure.is_fresh_choch = False
         
         # Update current structure
+        if self.current_structure.trend != trend:
+            self.current_structure.last_bos = None
+            
         self.current_structure.trend = trend
         self.current_structure.structure_quality = quality
         

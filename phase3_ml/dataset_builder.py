@@ -19,23 +19,38 @@ logger = logging.getLogger(__name__)
 
 # ── Target construction ────────────────────────────────────────────────────
 
-def add_target(df: pd.DataFrame, horizon: int = 5) -> pd.DataFrame:
+def add_target(df: pd.DataFrame, horizons: list = [5, 10, 15], buy_threshold: float = 0.02, sell_threshold: float = -0.02, target_horizon: int = 5) -> pd.DataFrame:
     """
-    Add binary target column.
-
-    target = 1  if Close shifts up over the next `horizon` days
-    target = 0  otherwise
-
-    The last `horizon` rows will have NaN targets and are dropped.
+    Add multiple ternary target columns.
+    
+    Creates:
+    - 'future_return_Nd'
+    - 'target_Nd' (1 for BUY, -1 for SELL, 0 for HOLD)
+    
+    For ML compatibility with existing functions, 'target' will default to 'target_{target_horizon}d'.
     """
     df = df.copy()
-    df["future_return"] = df["Close"].shift(-horizon) / df["Close"] - 1
-    df["target"] = (df["future_return"] > 0).astype(int)
-    df = df.dropna(subset=["target"])
-    logger.info(
-        f"Target distribution (horizon={horizon}d): "
-        f"UP={int(df['target'].sum())}  DOWN={int((1 - df['target']).sum())}"
-    )
+    
+    for h in horizons:
+        ret_col = f"future_return_{h}d"
+        tgt_col = f"target_{h}d"
+        
+        # Calculate forward return
+        # Use Open of next day to avoid overnight gap leakage
+        df[ret_col] = (df["Close"].shift(-h) - df["Open"].shift(-1)) / df["Open"].shift(-1)
+        
+        # Convert to classification
+        df[tgt_col] = 0 # HOLD
+        df.loc[df[ret_col] > buy_threshold, tgt_col] = 1 # BUY
+        df.loc[df[ret_col] < sell_threshold, tgt_col] = -1 # SELL
+        
+        logger.info(f"Target distribution ({h}d): BUY={int((df[tgt_col]==1).sum())} SELL={int((df[tgt_col]==-1).sum())} HOLD={int((df[tgt_col]==0).sum())}")
+    
+    # Set default target
+    if f"target_{target_horizon}d" in df.columns:
+        df["target"] = df[f"target_{target_horizon}d"]
+        
+    df = df.dropna(subset=[f"target_{h}d" for h in horizons])
     return df
 
 
@@ -107,10 +122,11 @@ def build_ml_dataset(
             raw = raw.rename(columns={"index": "Date"})
 
     # Features
-    featured = build_ml_features(raw)
+    featured = build_ml_features(raw, symbol=symbol)
 
     # Target
-    featured = add_target(featured, horizon=horizon)
+    featured = add_target(featured, target_horizon=horizon)
+
 
     # Keep only available feature columns + target + Date
     keep_cols = [c for c in FEATURE_COLUMNS if c in featured.columns]
@@ -145,3 +161,97 @@ if __name__ == "__main__":
     print(f"\nFeatures: {list(X_tr.columns)}")
     print(f"Train shape: {X_tr.shape}")
     print(f"Target balance (train): {y_tr.value_counts().to_dict()}")
+
+
+# ── Multi-horizon label comparison ────────────────────────────────────────
+
+def label_comparison_report(df: pd.DataFrame, horizons: list = None) -> pd.DataFrame:
+    """
+    Compare class balance and average forward return for each holding horizon.
+
+    Returns a DataFrame with BUY/HOLD/SELL counts and avg returns for each
+    horizon so you can empirically pick the best target_horizon before training.
+    """
+    if horizons is None:
+        horizons = [5, 10, 15]
+
+    df = df.copy()
+    rows = []
+    for h in horizons:
+        ret_col = f"future_return_{h}d"
+        tgt_col = f"target_{h}d"
+        df[ret_col] = df["Close"].shift(-h) / df["Close"] - 1
+        df[tgt_col] = 0
+        df.loc[df[ret_col] > 0.02, tgt_col] = 1
+        df.loc[df[ret_col] < -0.02, tgt_col] = -1
+        clean = df.dropna(subset=[ret_col])
+        total = len(clean)
+        for cls, name in [(-1, "SELL"), (0, "HOLD"), (1, "BUY")]:
+            mask = clean[tgt_col] == cls
+            cnt = int(mask.sum())
+            avg_ret = float(clean.loc[mask, ret_col].mean()) if cnt > 0 else 0.0
+            rows.append({
+                "horizon": h, "class": name, "count": cnt,
+                "pct": round(cnt / total * 100, 1) if total > 0 else 0.0,
+                "avg_return_pct": round(avg_ret * 100, 3),
+            })
+
+    report = pd.DataFrame(rows)
+    logger.info(f"\nLabel comparison:\n{report.to_string()}")
+    return report
+
+
+# ── Trade-outcome labels ──────────────────────────────────────────────────
+
+def add_trade_outcome_target(
+    df: pd.DataFrame,
+    atr_col: str = "ATR_14",
+    atr_multiplier_sl: float = 1.5,
+    rr_ratio: float = 2.0,
+    max_bars: int = 15,
+) -> pd.DataFrame:
+    """
+    Simulate the actual trade (T+1 entry, ATR stop, 2R target) and label
+    each row based on whether TP or SL was hit first within max_bars.
+
+    Labels: 1 = TP hit (BUY), -1 = SL hit (SELL), 0 = expired (HOLD).
+    Column added: 'trade_outcome'
+    """
+    df = df.copy()
+    n = len(df)
+    labels = [0] * n
+
+    close_arr = df["Close"].to_numpy()
+    high_arr = df["High"].to_numpy()
+    low_arr = df["Low"].to_numpy()
+    open_arr = df["Open"].to_numpy()
+    atr_arr = df[atr_col].to_numpy() if atr_col in df.columns else None
+
+    for i in range(n - 1):
+        entry = float(open_arr[i + 1])
+        atr_val = (float(atr_arr[i]) if atr_arr is not None and not pd.isna(atr_arr[i])
+                   else entry * 0.02)
+        stop_dist = atr_val * atr_multiplier_sl
+        sl = entry - stop_dist
+        tp = entry + stop_dist * rr_ratio
+
+        outcome = 0
+        for j in range(i + 1, min(i + 1 + max_bars, n)):
+            h = float(high_arr[j])
+            l = float(low_arr[j])
+            if h >= tp and l > sl:
+                outcome = 1      # TP hit before SL
+                break
+            elif l <= sl:
+                outcome = -1     # SL hit (or both hit same bar → conservative)
+                break
+
+        labels[i] = outcome
+
+    df["trade_outcome"] = labels
+    buy = int((df["trade_outcome"] == 1).sum())
+    sell = int((df["trade_outcome"] == -1).sum())
+    hold = int((df["trade_outcome"] == 0).sum())
+    logger.info(f"Trade-outcome labels: BUY={buy} SELL={sell} HOLD={hold}")
+    return df
+

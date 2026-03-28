@@ -55,9 +55,15 @@ class BacktestMetrics:
         if len(trades) == 0:
             return 0.0
         
-        winning = sum(1 for trade in trades if float(trade.get('profit_loss', 0)) > 0)
+        winning = 0
+        for trade in trades:
+            pl = trade.get('profit_loss', 0)
+            if hasattr(pl, 'iloc'):
+                pl = pl.iloc[0]
+            if float(pl) > 0:
+                winning += 1
         return (winning / len(trades)) * 100
-    
+
     @staticmethod
     def calculate_profit_factor(trades: List[Dict]) -> float:
         """Profit factor = sum of profits / sum of losses
@@ -68,8 +74,20 @@ class BacktestMetrics:
         if len(trades) == 0:
             return 0.0
         
-        gross_profit = sum(float(trade.get('profit_loss', 0)) for trade in trades if float(trade.get('profit_loss', 0)) > 0)
-        gross_loss = abs(sum(float(trade.get('profit_loss', 0)) for trade in trades if float(trade.get('profit_loss', 0)) < 0))
+        gross_profit = 0.0
+        gross_loss = 0.0
+        
+        for trade in trades:
+            pl = trade.get('profit_loss', 0)
+            if hasattr(pl, 'iloc'):
+                pl = float(pl.iloc[0])
+            else:
+                pl = float(pl)
+                
+            if pl > 0:
+                gross_profit += pl
+            elif pl < 0:
+                gross_loss += abs(pl)
         
         if gross_loss == 0:
             return gross_profit if gross_profit > 0 else 0.0
@@ -122,6 +140,13 @@ class BacktestMetrics:
             for i in range(len(equity_curve)-1)
         ]) if len(equity_curve) > 1 else np.array([])
         
+        # Helper to extract pl safely
+        def safe_pl(t):
+            pl = t.get('profit_loss', 0)
+            if hasattr(pl, 'iloc'):
+                return float(pl.iloc[0])
+            return float(pl)
+
         return {
             "total_return_pct": BacktestMetrics.calculate_returns(equity_curve),
             "cagr": BacktestMetrics.calculate_cagr(equity_curve, days),
@@ -131,6 +156,59 @@ class BacktestMetrics:
             "profit_factor": BacktestMetrics.calculate_profit_factor(trades),
             "recovery_factor": BacktestMetrics.calculate_recovery_factor(equity_curve, trades),
             "total_trades": len(trades),
-            "winning_trades": sum(1 for t in trades if float(t.get('profit_loss', 0)) > 0),
-            "losing_trades": sum(1 for t in trades if float(t.get('profit_loss', 0)) < 0),
+            "winning_trades": sum(1 for t in trades if safe_pl(t) > 0),
+            "losing_trades": sum(1 for t in trades if safe_pl(t) < 0),
         }
+
+    @staticmethod
+    def calculate_process_metrics(trades: List[Dict]) -> Dict:
+        """
+        Calculates institutional-grade process metrics from the desk manifesto.
+        Requires 'pnl' and 'r_multiple' to be populated in trades.
+        """
+        if len(trades) == 0:
+            return {}
+
+        def safe_float(val):
+            if hasattr(val, 'iloc'):
+                return float(val.iloc[0])
+            return float(val) if val is not None else 0.0
+
+        winners = [safe_float(t.get('pnl', t.get('profit_loss', 0))) for t in trades if safe_float(t.get('pnl', t.get('profit_loss', 0))) > 0]
+        losers = [safe_float(t.get('pnl', t.get('profit_loss', 0))) for t in trades if safe_float(t.get('pnl', t.get('profit_loss', 0))) < 0]
+        
+        win_rate = len(winners) / len(trades)
+        loss_rate = 1.0 - win_rate
+        
+        avg_winner = np.mean(winners) if winners else 0.0
+        avg_loser = abs(np.mean(losers)) if losers else 0.0
+        
+        # Expectancy per trade: (Win rate * Avg winner) - (Loss rate * Avg loser)
+        expectancy = (win_rate * avg_winner) - (loss_rate * avg_loser)
+        
+        # R-Multiple Analysis
+        r_multiples = [safe_float(t.get('r_multiple', 0)) for t in trades]
+        avg_r_multiple = np.mean(r_multiples) if r_multiples else 0.0
+        
+        # Setup Quality vs Outcome
+        # groups trades by setup quality 'score' mapping 1-3
+        quality_map = {1: [], 2: [], 3: []}
+        for t in trades:
+            score = int(float(t.get('score', 1)))
+            if score in quality_map:
+                quality_map[score].append(safe_float(t.get('pnl', t.get('profit_loss', 0))))
+                
+        metrics = {
+            "expectancy_dollars": float(expectancy),
+            "win_rate_pct": float(win_rate * 100),
+            "avg_r_multiple_achieved": float(avg_r_multiple),
+            "is_win_rate_broken": bool((win_rate * 100) < 38.0 and len(trades) >= 20),
+            "quality_performance": {
+                str(score): {
+                    "avg_pnl": float(np.mean(pnls)) if pnls else 0.0,
+                    "trade_count": len(pnls)
+                }
+                for score, pnls in quality_map.items()
+            }
+        }
+        return metrics

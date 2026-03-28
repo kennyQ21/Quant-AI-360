@@ -132,7 +132,7 @@ class SMCScanner:
                 return None
             
             # Get current price
-            current_price = df['Close'].iloc[-1]
+            current_price = float(np.asarray(df['Close'])[-1])
             
             # Score with confluence engine
             setup = self.confluence.score_setup(

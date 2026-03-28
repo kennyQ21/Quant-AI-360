@@ -11,6 +11,7 @@ import logging
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import PARQUET_DIR, DATA_PERIOD, DATA_INTERVAL
+from storage.data_loader import load_market_data, save_market_data
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -47,7 +48,7 @@ def fetch_stock_data(symbol: str, period: str = DATA_PERIOD, interval: str = DAT
 
 def save_data(symbol: str, data: pd.DataFrame) -> bool:
     """
-    Save stock data to parquet format
+    Save stock data to parquet format via Unified DataLoader
     
     Args:
         symbol: Stock symbol
@@ -57,13 +58,10 @@ def save_data(symbol: str, data: pd.DataFrame) -> bool:
         True if successful, False otherwise
     """
     try:
-        # Create parquet directory if it doesn't exist
-        PARQUET_DIR.mkdir(parents=True, exist_ok=True)
-        
-        file_path = PARQUET_DIR / f"{symbol}.parquet"
-        data.to_parquet(file_path)
-        logger.info(f"Saved {symbol} data to {file_path}")
-        return True
+        success = save_market_data(data, symbol)
+        if success:
+            logger.info(f"Saved {symbol} data via DataLoader")
+        return success
     
     except Exception as e:
         logger.error(f"Error saving data for {symbol}: {str(e)}")
@@ -72,7 +70,7 @@ def save_data(symbol: str, data: pd.DataFrame) -> bool:
 
 def load_data(symbol: str) -> pd.DataFrame:
     """
-    Load stock data from parquet file
+    Load stock data from parquet file via Unified DataLoader
     
     Args:
         symbol: Stock symbol
@@ -81,13 +79,12 @@ def load_data(symbol: str) -> pd.DataFrame:
         DataFrame with stock data
     """
     try:
-        file_path = PARQUET_DIR / f"{symbol}.parquet"
+        data = load_market_data(symbol)
         
-        if not file_path.exists():
-            logger.warning(f"File not found: {file_path}")
+        if data is None or data.empty:
+            logger.warning(f"No data found for {symbol} after fallback.")
             return pd.DataFrame()
         
-        data = pd.read_parquet(file_path)
         logger.info(f"Loaded {len(data)} records for {symbol}")
         return data
     

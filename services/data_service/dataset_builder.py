@@ -10,6 +10,7 @@ import logging
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from config import PARQUET_DIR, DATASET_FILE
+from storage.data_loader import store, load_market_data
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -24,32 +25,48 @@ def build_dataset() -> pd.DataFrame:
         Combined DataFrame with data from all stocks
     """
     try:
-        # Find all parquet files
-        parquet_files = list(PARQUET_DIR.glob("*.parquet"))
+        # Get raw data symbols from local store layout as an index helper
+        stems = store.list_files()
+        raw_symbols = [s.replace("raw_", "") for s in stems if s.startswith("raw_")]
         
-        if not parquet_files:
-            logger.warning(f"No parquet files found in {PARQUET_DIR}")
+        # Also include legacy format items for transition
+        legacy_symbols = [s for s in stems if not s.startswith("raw_") and not s.startswith("features_")]
+        
+        all_symbols = list(set(raw_symbols + legacy_symbols))
+        
+        if not all_symbols:
+            logger.warning(f"No symbols found in data store.")
             return pd.DataFrame()
         
-        logger.info(f"Found {len(parquet_files)} parquet files")
+        logger.info(f"Found {len(all_symbols)} symbols to process")
         
         dfs = []
-        for file_path in parquet_files:
+        for symbol in all_symbols:
             try:
-                df = pd.read_parquet(file_path)
+                # Try generic load via the data_loader
+                df = load_market_data(symbol)
+                
+                # Fallback to legacy structure if the data_loader (which looks for 'raw_') fails
+                if df is None or df.empty:
+                    legacy_path = PARQUET_DIR / f"{symbol}.parquet"
+                    if legacy_path.exists():
+                        df = pd.read_parquet(legacy_path)
+                    
+                if df is None or df.empty:
+                    continue
                 
                 # Add symbol column
-                symbol = file_path.stem  # filename without extension
                 df["symbol"] = symbol
                 
                 # Reset index to have Date as a column
-                df = df.reset_index()
+                if "Date" not in df.columns and "date" not in df.columns:
+                    df = df.reset_index()
                 
                 dfs.append(df)
                 logger.info(f"Loaded {symbol}: {len(df)} records")
             
             except Exception as e:
-                logger.error(f"Error reading {file_path}: {str(e)}")
+                logger.error(f"Error reading dataset for {symbol}: {str(e)}")
                 continue
         
         if not dfs:

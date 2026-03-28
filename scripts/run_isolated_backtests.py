@@ -1,9 +1,16 @@
 import pandas as pd
 import logging
+import sys
+import os
 from pathlib import Path
 from tqdm import tqdm
+
+# Ensure the root directory is on the path so module imports work
+sys.path.append(os.getcwd())
+
 from services.strategy_engine.scanner import SMCScanner
 from services.backtesting.event_backtester import EventDrivenBacktester
+from storage.data_loader import load_market_data
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s:%(name)s:%(message)s')
 
@@ -21,7 +28,12 @@ def run_all_isolated_backtests():
     
     for f in tqdm(files, desc="Processing stocks"):
         symbol = f.stem
-        df = pd.read_parquet(f)
+        df = load_market_data(symbol)
+        
+        if df is None or df.empty:
+            logging.warning(f"Failed to load market data for {symbol}, skipping...")
+            continue
+            
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
             

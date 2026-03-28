@@ -56,6 +56,25 @@ _CROSS_SECTIONAL_FEATURES = [
 _TREND_FEATURES = [
     "MA_Slope_50", "Trend_Strength", "Price_Accel",
 ]
+_STRATEGY_FEATURES = [
+    "liquidity_sweep_detected", "sweep_direction",
+    "fvg_present", "fvg_direction", "price_inside_fvg",
+    "structure_trend", "bos_detected",
+    "amd_phase", "vcp_detected", "vcp_contraction_count",
+    "breakout_detected", "base_length_days", "confluence_score"
+]
+
+# Phase 4 interaction features (SMC combo signals)
+_INTERACTION_FEATURES = [
+    "sweep_and_fvg",       # core Tier1 combo
+    "vcp_and_bullish",     # VCP in confirmed uptrend
+    "bos_and_sweep",       # BOS confirmed by sweep = high conviction
+    "fvg_aligned",         # FVG direction matches market structure
+    "tier1_full_setup",    # complete Tier1 triforce
+    "confluence_high",     # binary: score >= 75
+    "Mom_3m_rank_zscore",  # z-scored 3-month momentum
+    "ATR_regime",          # 1 if ATR > 30d median (high-vol regime)
+]
 
 # Full list (order matters for consistent training)
 FEATURE_COLUMNS = (
@@ -68,6 +87,8 @@ FEATURE_COLUMNS = (
     + _MARKET_CONTEXT_FEATURES
     + _TREND_FEATURES
     + _CROSS_SECTIONAL_FEATURES
+    + _STRATEGY_FEATURES
+    + _INTERACTION_FEATURES
 )
 
 
@@ -118,7 +139,7 @@ def _flatten_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 # ── Main feature builder ─────────────────────────────────────────────────
 
-def build_ml_features(df: pd.DataFrame, add_market_context: bool = True) -> pd.DataFrame:
+def build_ml_features(df: pd.DataFrame, symbol: str = None, add_market_context: bool = True) -> pd.DataFrame:
     """
     Build ~50 ML features from OHLCV data.
 
@@ -132,6 +153,7 @@ def build_ml_features(df: pd.DataFrame, add_market_context: bool = True) -> pd.D
         7. Market context (3) — NIFTY + India VIX
         8. Trend factors (3)
         9. Cross-sectional ranks (5) — stub, populated during portfolio building
+        10. Strategy features (13) — SMC, AMD, VCP, etc.
     """
     df = df.copy()
 
@@ -160,8 +182,8 @@ def build_ml_features(df: pd.DataFrame, add_market_context: bool = True) -> pd.D
     bb_range = df["BB_Upper"] - df["BB_Lower"]
     df["BB_Pct_B"] = np.where(bb_range != 0, (close - df["BB_Lower"]) / bb_range, 0.5)
     df["RSI_Norm"] = df["RSI_14"] / 100.0
-    df["SMA_200"] = calculate_sma(close, 200)
-    df["EMA_20"] = calculate_ema(close, 20)
+    df["SMA_200"] = close.rolling(200).mean()
+    df["EMA_20"] = close.ewm(span=20, adjust=False).mean()
     df["Price_to_SMA20"] = close / df["SMA_20"]
     df["Price_to_SMA50"] = close / df["SMA_50"]
     df["Price_to_SMA200"] = close / df["SMA_200"]
@@ -203,7 +225,7 @@ def build_ml_features(df: pd.DataFrame, add_market_context: bool = True) -> pd.D
 
     # ── Trend factors ─────────────────────────────────────────────────
     df["MA_Slope_50"] = df["SMA_50"].diff(5)
-    sma_100 = calculate_sma(close, 100)
+    sma_100 = close.rolling(100).mean()
     df["Trend_Strength"] = np.where(sma_100 != 0, (df["SMA_20"] - sma_100) / sma_100, 0.0)
     df["Price_Accel"] = df["Returns_5d"] - df["Returns_10d"]
 
@@ -219,6 +241,34 @@ def build_ml_features(df: pd.DataFrame, add_market_context: bool = True) -> pd.D
     for col in _CROSS_SECTIONAL_FEATURES:
         if col not in df.columns:
             df[col] = 0.5  # neutral rank until computed across stocks
+
+    # ── Phase 4: Interaction features ─────────────────────────────────
+    # These require the _STRATEGY_FEATURES columns to exist first.
+    # If strategy features weren't generated (symbol=None path), they
+    # default to 0, so the interaction features also default to 0.
+    def _col(name: str, default=0) -> "pd.Series":
+        return df[name].fillna(default) if name in df.columns else pd.Series(default, index=df.index)
+
+    df["sweep_and_fvg"] = (_col("liquidity_sweep_detected") * _col("fvg_present")).astype(int)
+    df["vcp_and_bullish"] = (_col("vcp_detected") * (_col("structure_trend") == 1)).astype(int)
+    df["bos_and_sweep"] = (_col("bos_detected") * _col("liquidity_sweep_detected")).astype(int)
+    df["fvg_aligned"] = (_col("fvg_direction") == _col("structure_trend")).astype(int)
+    df["tier1_full_setup"] = (df["sweep_and_fvg"] & _col("bos_detected")).astype(int)
+    df["confluence_high"] = (_col("confluence_score") >= 75).astype(int)
+
+    # Z-scored 3m momentum (60-day rolling window)
+    mom3 = df["Mom_3m"] if "Mom_3m" in df.columns else pd.Series(0.0, index=df.index)
+    mom3_mean = mom3.rolling(60, min_periods=10).mean()
+    mom3_std = mom3.rolling(60, min_periods=10).std()
+    df["Mom_3m_rank_zscore"] = np.where(mom3_std != 0, (mom3 - mom3_mean) / mom3_std, 0.0)
+
+    # ATR regime: 1 if current ATR > 30-day median
+    if "ATR_14" in df.columns:
+        atr_series = df["ATR_14"]
+        atr_med = atr_series.rolling(30, min_periods=5).median()
+        df["ATR_regime"] = (atr_series > atr_med).astype(float)
+    else:
+        df["ATR_regime"] = 0.0
 
     # ── Sanitize: replace inf and clip extreme values ─────────────────
     feature_cols = [c for c in FEATURE_COLUMNS if c in df.columns]
@@ -290,6 +340,26 @@ def add_cross_sectional_ranks(all_stocks_df: pd.DataFrame) -> pd.DataFrame:
             df[rank_col] = df.groupby("Date")[source_col].rank(pct=True)
         else:
             df[rank_col] = 0.5
+            
+    # ── Strategy features ──────────────────────────────────────────────
+    if symbol:
+        try:
+            from phase3_ml.strategy_features import generate_strategy_features
+            strategy_feat_df = generate_strategy_features(df, symbol)
+            
+            # fill na with 0 just in case
+            for col in _STRATEGY_FEATURES:
+                if col in strategy_feat_df.columns:
+                    df[col] = strategy_feat_df[col].fillna(0)
+                else:
+                    df[col] = 0
+        except Exception as e:
+            logger.warning(f"Failed to generate strategy features for {symbol}: {e}")
+            for col in _STRATEGY_FEATURES:
+                df[col] = 0
+    else:
+        for col in _STRATEGY_FEATURES:
+            df[col] = 0
 
     return df
 

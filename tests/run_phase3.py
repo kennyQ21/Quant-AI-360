@@ -61,8 +61,9 @@ def run_randomization_test(symbol: str):
             data[col] = data[col].iloc[:, 0]
 
     # Import the strategy's feature adder
-    from services.backtesting.strategies.ml_strategy import _add_extra_features
-    featured = _add_extra_features(data)
+    from phase3_ml.features import build_ml_features
+    # We do a quick dummy symbol
+    featured = build_ml_features(data, symbol="DUMMY")
 
     # Build target
     featured["future_return"] = featured["Close"].shift(-5) / featured["Close"] - 1

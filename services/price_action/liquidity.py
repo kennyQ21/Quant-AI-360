@@ -9,6 +9,8 @@ from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass
 import logging
 
+from services.liquidity_sweep.engine import detect_liquidity_sweep
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -314,10 +316,23 @@ class LiquidityDetector:
         )
         self.liquidity_levels.append(level)
         
+        # Integrate standalone sweep detection for Confluence Engine Tier 1 compatibility
+        sweep_result = detect_liquidity_sweep(df)
+        recent_sweeps = []
+        if sweep_result.get("detected"):
+            # Standardize sweep dictionary for downstream
+            if sweep_result.get("type", "") == "Bullish Sweep":
+                sweep_result["type"] = "SELL_SIDE"
+            elif sweep_result.get("type", "") == "Bearish Sweep":
+                sweep_result["type"] = "BUY_SIDE"
+            recent_sweeps.append(sweep_result)
+        
         return {
             'liquidity_levels': self.liquidity_levels,
             'total_liquidity_zones': len(self.liquidity_levels),
             'highest_strength': max([lvl.strength for lvl in self.liquidity_levels]) if self.liquidity_levels else 0,
+            'sweeps': recent_sweeps,
+            'recent_sweeps': recent_sweeps,
         }
     
     def find_nearest_liquidity_above(self, price: float) -> Optional[LiquidityLevel]:

@@ -50,9 +50,9 @@ def evaluate_model(
     return {
         "model": model_name,
         "accuracy": float(accuracy_score(y_true, y_pred)),
-        "precision": float(precision_score(y_true, y_pred, zero_division=0)),
-        "recall": float(recall_score(y_true, y_pred, zero_division=0)),
-        "f1": float(f1_score(y_true, y_pred, zero_division=0)),
+        "precision": float(precision_score(y_true, y_pred, zero_division=0, average='weighted')),
+        "recall": float(recall_score(y_true, y_pred, zero_division=0, average='weighted')),
+        "f1": float(f1_score(y_true, y_pred, zero_division=0, average='weighted')),
     }
 
 
@@ -103,17 +103,24 @@ def print_classification_report(y_true: np.ndarray, y_proba: np.ndarray, name: s
         print("scikit-learn not available for detailed report.")
         return
 
-    y_pred = (y_proba > 0.5).astype(int)
+    # y_proba here is probability of class BUY (label 1).
+    # Since we have -1, 0, 1, simple thresholding > 0.5 maps to binary.
+    # To keep it generic without breaking everything, let's map labels cleanly.
+    y_pred = np.where(y_proba > 0.6, 1, np.where(y_proba < 0.4, -1, 0))
     print(f"\n{'='*50}")
     print(f"CLASSIFICATION REPORT: {name}")
     print(f"{'='*50}")
-    print(classification_report(y_true, y_pred, target_names=["DOWN", "UP"]))
+    labels_present = np.unique(np.concatenate([y_true, y_pred]))
+    target_names = []
+    if -1 in labels_present: target_names.append("SELL")
+    if 0 in labels_present: target_names.append("HOLD")
+    if 1 in labels_present: target_names.append("BUY")
+    
+    print(classification_report(y_true, y_pred, labels=labels_present, target_names=target_names))
 
-    cm = confusion_matrix(y_true, y_pred)
+    cm = confusion_matrix(y_true, y_pred, labels=labels_present)
     print("Confusion Matrix:")
-    print("              Pred DOWN  Pred UP")
-    print(f"  True DOWN   {cm[0][0]:>8d}  {cm[0][1]:>7d}")
-    print(f"  True UP     {cm[1][0]:>8d}  {cm[1][1]:>7d}")
+    print(cm)
     print()
 
 
