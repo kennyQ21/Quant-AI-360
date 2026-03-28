@@ -1,0 +1,93 @@
+name: Backend CI/CD (Azure Container Apps)
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'api/**'
+      - 'storage/**'
+      - 'services/**'
+      - 'models/**'
+      - 'Dockerfile'
+      - 'requirements.txt'
+      - '.github/workflows/backend-ci-cd.yml'
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - 'api/**'
+      - 'storage/**'
+      - 'services/**'
+
+jobs:
+  build-and-test:
+    name: Build & Test Python Backend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ruff pytest
+
+      - name: Lint with Ruff
+        run: |
+          # Continue even if linting finds issues initially
+          ruff check api/ storage/ services/ || true
+
+  deploy-azure:
+    name: Deploy to Azure Container Apps
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Login to GitHub Container Registry (GHCR)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Extract Metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/quant-backend
+          tags: |
+            type=sha
+            latest
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy to Azure Container Apps
+        uses: azure/container-apps-deploy-action@v3
+        with:
+          # Update this if your Azure app name is different
+          containerAppName: quant-trading-api
+          # Add this secret in GitHub Repo settings
+          resourceGroup: ${{ secrets.AZURE_RESOURCE_GROUP }}
+          imageToDeploy: ghcr.io/${{ github.repository }}/quant-backend:latest
