@@ -192,7 +192,7 @@ export default function ScannerPage() {
         </div>
 
         {/* Results Grid */}
-        <div style={{ margin: "20px", display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "16px" }}>
+        <div style={{ margin: "20px", display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px" }}>
           {filteredScans.length > 0 ? (
             filteredScans.map((scan) => (
               <div

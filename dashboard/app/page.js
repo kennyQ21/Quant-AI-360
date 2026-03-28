@@ -113,6 +113,17 @@ function ChartPanel({ symbol, companyName }) {
 
 export default function Home() {
   const [symbol, setSymbol] = useState("RELIANCE.NS");
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const sym = params.get("symbol");
+      if (sym) {
+        setSymbol(sym);
+      }
+    }
+  }, []);
+
   const [a, setA] = useState(null);
   const [showNewsModal, setShowNewsModal] = useState(false);
   const [loading, setLoading] = useState({ candles: false, analysis: false });
@@ -153,6 +164,11 @@ export default function Home() {
             onMouseOver={(e) => e.target.style.backgroundColor = "rgba(50,150,250,0.2)"}
             onMouseOut={(e) => e.target.style.backgroundColor = "transparent"}>
             🔍 Scanner
+          </a>
+          <a href="/portfolio" style={{ marginLeft: "12px", padding: "6px 12px", borderRadius: "4px", border: "1px solid var(--accent-magenta)", color: "var(--accent-magenta)", textDecoration: "none", fontSize: "12px", fontWeight: 600, transition: "all 0.2s" }} 
+            onMouseOver={(e) => e.target.style.backgroundColor = "rgba(250,50,250,0.2)"}
+            onMouseOut={(e) => e.target.style.backgroundColor = "transparent"}>
+            📈 PnL & Trades
           </a>
         </div>
         <div className="top-bar-right">
